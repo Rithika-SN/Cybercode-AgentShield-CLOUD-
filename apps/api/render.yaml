@@ -1,0 +1,21 @@
+# API Deployment Configuration for Render
+
+runtime: python-3.12
+pythonVersion: 3.12
+
+services:
+  - type: web
+    name: agentshield-api
+    plan: free
+    buildCommand: pip install poetry && poetry install
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        scope: run
+      - key: SUPABASE_JWT_SECRET
+        scope: run
+      - key: ENVIRONMENT
+        value: production
+        scope: run
+      - key: CORS_ORIGIN
+        scope: run

@@ -1,0 +1,356 @@
+import re
+import logging
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+class SecurityEvaluator:
+    """Deterministic security evaluator for agent actions."""
+
+    # Injection patterns
+    INJECTION_PATTERNS = [
+        r"(?i)(ignore|override|bypass).*?(instruction|rule|policy|safeguard)",
+        r"(?i)(forget|disregard|dont).*?(previous|system|instruction)",
+        r"(?i)((system|admin|root)\s*prompt)",
+        r"(?i)(reveal|show|display).*?(secret|key|password|token|api)",
+        r"(?i)(what.*are.*your.*instructions)",
+        r"(?i)(who.*are.*you|what.*are.*you)",
+        r"(?i)(execute|run|perform).*?(command|code|script)",
+    ]
+
+    # Credential patterns
+    CREDENTIAL_PATTERNS = [
+        r"(?i)api[_-]?key['\"]?\s*[:=]\s*['\"]?([a-z0-9_\-]{20,})",
+        r"(?i)sk_[a-z0-9]{20,}",
+        r"(?i)password['\"]?\s*[:=]\s*['\"]?([^\s\"']{8,})",
+        r"(?i)token['\"]?\s*[:=]\s*['\"]?([a-z0-9_\-]{20,})",
+        r"(?i)secret['\"]?\s*[:=]\s*['\"]?([^\s\"']{8,})",
+        r"(?i)bearer\s+[a-z0-9_\-\.]{20,}",
+    ]
+
+    # PII patterns
+    PII_PATTERNS = [
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",  # Email
+        r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b",  # Phone
+        r"\b\d{3}[-.]?\d{4}\b",  # Local phone number
+        r"\b\d{3}-\d{2}-\d{4}\b",  # SSN
+    ]
+
+    # Destructive operations
+    DESTRUCTIVE_OPERATIONS = ["delete", "drop", "truncate", "wipe", "remove", "destroy"]
+
+    # Policy definitions (templates)
+    POLICIES = {
+        "block_prompt_injection": {
+            "id": "policy_001",
+            "name": "Block Prompt Injection",
+            "severity_threshold": 75,
+            "category": "prompt_injection",
+            "action": "block",
+        },
+        "block_credential_leak": {
+            "id": "policy_002",
+            "name": "Block Credential Leak",
+            "severity_threshold": 80,
+            "category": "credential_leak",
+            "action": "block",
+        },
+        "require_approval_high_risk": {
+            "id": "policy_003",
+            "name": "Require Approval for High Risk",
+            "severity_threshold": 60,
+            "category": "all",
+            "action": "require_approval",
+        },
+        "block_destructive_operations": {
+            "id": "policy_004",
+            "name": "Block Destructive Operations",
+            "severity_threshold": 70,
+            "category": "destructive",
+            "action": "block",
+        },
+    }
+
+    def evaluate(
+        self,
+        agent_name: str,
+        user_request: str,
+        requested_tool: str,
+        mock_context: Optional[str] = None,
+    ) -> dict:
+        """
+        Evaluate an agent action and return a decision with risk score.
+
+        Returns:
+            dict: {
+                decision: str (ALLOW, REQUIRE_APPROVAL, BLOCK),
+                risk_score: int (0-100),
+                severity: str (LOW, MEDIUM, HIGH, CRITICAL),
+                categories: list[str],
+                detections: list[str],
+                matching_policy_ids: list[str],
+                mitigation_recommendations: list[str],
+                sanitized_input_preview: str
+            }
+        """
+        detections = []
+        risk_score = 0
+        categories = set()
+        matching_policies = []
+
+        # Combine all input text
+        combined_text = f"{user_request} {mock_context or ''}"
+
+        # 1. Check for prompt injection patterns
+        injection_risk = self._check_prompt_injection(combined_text)
+        if injection_risk["detected"]:
+            detections.extend(injection_risk["signals"])
+            risk_score += injection_risk["score"]
+            categories.add("prompt_injection")
+            matching_policies.append(self.POLICIES["block_prompt_injection"]["id"])
+
+        # 2. Check for credential leaks
+        credential_risk = self._check_credentials(combined_text)
+        if credential_risk["detected"]:
+            detections.extend(credential_risk["signals"])
+            risk_score += credential_risk["score"]
+            categories.add("credential_leak")
+            matching_policies.append(self.POLICIES["block_credential_leak"]["id"])
+
+        # 3. Check for PII
+        pii_risk = self._check_pii(combined_text)
+        if pii_risk["detected"]:
+            detections.extend(pii_risk["signals"])
+            risk_score += pii_risk["score"]
+            categories.add("data_leak")
+
+        # 4. Check for destructive operations
+        destructive_risk = self._check_destructive_operations(
+            combined_text, requested_tool
+        )
+        if destructive_risk["detected"]:
+            detections.extend(destructive_risk["signals"])
+            risk_score += destructive_risk["score"]
+            categories.add("destructive")
+            matching_policies.append(self.POLICIES["block_destructive_operations"]["id"])
+
+        # 5. Check tool permissions
+        tool_risk = self._check_tool_permissions(requested_tool)
+        if tool_risk["detected"]:
+            detections.extend(tool_risk["signals"])
+            risk_score += tool_risk["score"]
+            categories.add("permission")
+
+        # Cap risk score
+        risk_score = min(100, max(0, risk_score))
+
+        # Sanitize input for logging
+        sanitized_preview = self._sanitize_input(combined_text)
+
+        # Determine severity and decision
+        severity = self._get_severity(risk_score)
+        decision = self._make_decision(risk_score, severity, list(categories))
+
+        # Add approval policy if high-risk
+        if risk_score >= 60 and decision != "BLOCK":
+            if self.POLICIES["require_approval_high_risk"]["id"] not in matching_policies:
+                matching_policies.append(
+                    self.POLICIES["require_approval_high_risk"]["id"]
+                )
+
+        mitigation = self._get_mitigation_recommendations(list(categories), severity)
+
+        return {
+            "decision": decision,
+            "risk_score": risk_score,
+            "severity": severity,
+            "categories": sorted(list(categories)),
+            "detections": detections,
+            "matching_policy_ids": matching_policies,
+            "mitigation_recommendations": mitigation,
+            "sanitized_input_preview": sanitized_preview,
+        }
+
+    def _check_prompt_injection(self, text: str) -> dict:
+        """Check for prompt injection patterns."""
+        signals = []
+        score = 0
+
+        for pattern in self.INJECTION_PATTERNS:
+            if re.search(pattern, text):
+                signals.append(f"Prompt injection pattern detected: {pattern[:30]}...")
+                score += 15
+
+        if signals:
+            score = min(40, score)  # Cap injection score
+
+        return {"detected": bool(signals), "signals": signals, "score": score}
+
+    def _check_credentials(self, text: str) -> dict:
+        """Check for exposed credentials."""
+        signals = []
+        score = 0
+        found_types = set()
+
+        for pattern in self.CREDENTIAL_PATTERNS:
+            matches = re.findall(pattern, text)
+            if matches:
+                cred_type = pattern.split("(?i)")[1].split("[")[0] if "(?i)" in pattern else "credential"
+                found_types.add(cred_type)
+                score += 40
+                signals.append(f"Exposed {cred_type}: {len(matches)} match(es)")
+
+        if signals:
+            score = min(50, score)  # Cap at 50 for credentials alone
+
+        return {"detected": bool(signals), "signals": signals, "score": score}
+
+    def _check_pii(self, text: str) -> dict:
+        """Check for personally identifiable information."""
+        signals = []
+        score = 0
+        pii_types = {}
+
+        for pattern in self.PII_PATTERNS:
+            matches = re.findall(pattern, text)
+            if matches:
+                pii_type = (
+                    "Email" if "@" in pattern else "Phone" if "phone" in pattern.lower() else "SSN"
+                )
+                pii_types[pii_type] = len(matches)
+                score += 10
+
+        for pii_type, count in pii_types.items():
+            signals.append(f"Found {pii_type}: {count} instance(s)")
+
+        return {"detected": bool(signals), "signals": signals, "score": score}
+
+    def _check_destructive_operations(
+        self, user_request: str, tool: str
+    ) -> dict:
+        """Check for destructive operations."""
+        signals = []
+        score = 0
+
+        # Check if destructive tool requested
+        destructive_tools = ["delete_mock_record", "drop", "truncate"]
+        if any(dt in tool.lower() for dt in destructive_tools):
+            signals.append(f"Destructive tool requested: {tool}")
+            score += 30
+
+        # Check for destructive keywords in request
+        for op in self.DESTRUCTIVE_OPERATIONS:
+            if op in user_request.lower():
+                signals.append(f"Destructive operation keyword: {op}")
+                score += 15
+
+        # Exporting data is non-destructive but should never execute without
+        # explicit review in this safe simulation.
+        if tool == "export_mock_report":
+            signals.append("Sensitive mock report export requested")
+            score += 25
+
+        if re.search(r"(?i)\b(leak|exfiltrate|send\s+.*\bdata)\b", user_request):
+            signals.append("Potential data exfiltration language detected")
+            score += 25
+
+        return {"detected": bool(signals), "signals": signals, "score": score}
+
+    def _check_tool_permissions(self, tool: str) -> dict:
+        """Check tool access permissions."""
+        signals = []
+        score = 0
+
+        # All tools are in our safe list; check for unknown tools
+        allowed_tools = [
+            "knowledge_search",
+            "read_demo_file",
+            "send_mock_email",
+            "export_mock_report",
+            "delete_mock_record",
+        ]
+
+        if tool not in allowed_tools:
+            signals.append(f"Unknown tool requested: {tool}")
+            score += 10
+
+        return {"detected": bool(signals), "signals": signals, "score": score}
+
+    def _sanitize_input(self, text: str) -> str:
+        """Sanitize input by masking sensitive patterns."""
+        sanitized = text
+
+        # Mask credentials
+        for pattern in self.CREDENTIAL_PATTERNS:
+            sanitized = re.sub(pattern, "[REDACTED_CREDENTIAL]", sanitized)
+
+        # Mask PII
+        for pattern in self.PII_PATTERNS:
+            sanitized = re.sub(pattern, "[REDACTED_PII]", sanitized)
+
+        # Truncate if too long
+        if len(sanitized) > 500:
+            sanitized = sanitized[:500] + "...[truncated]"
+
+        return sanitized
+
+    def _get_severity(self, risk_score: int) -> str:
+        """Determine severity level from risk score."""
+        if risk_score >= 80:
+            return "CRITICAL"
+        elif risk_score >= 60:
+            return "HIGH"
+        elif risk_score >= 40:
+            return "MEDIUM"
+        else:
+            return "LOW"
+
+    def _make_decision(self, risk_score: int, severity: str, categories: list[str]) -> str:
+        """Make an allow/require_approval/block decision."""
+        # Block for critical detections
+        if severity == "CRITICAL" or risk_score >= 80:
+            return "BLOCK"
+
+        # A request that combines instruction override with data exfiltration
+        # is unsafe even if individual signals have not reached the cap.
+        if "prompt_injection" in categories and "data_leak" in categories:
+            return "BLOCK"
+
+        # Require approval for high-risk
+        if severity == "HIGH" or risk_score >= 60:
+            return "REQUIRE_APPROVAL"
+
+        # Allow for low/medium risk
+        return "ALLOW"
+
+    def _get_mitigation_recommendations(
+        self, categories: list[str], severity: str
+    ) -> list[str]:
+        """Generate mitigation recommendations based on detections."""
+        recommendations = []
+
+        if "prompt_injection" in categories:
+            recommendations.append("Implement prompt injection filters")
+            recommendations.append("Use instruction-following patterns with clear delimiters")
+
+        if "credential_leak" in categories:
+            recommendations.append("Scan inputs for credential patterns")
+            recommendations.append("Never log sensitive credentials")
+
+        if "data_leak" in categories:
+            recommendations.append("Implement PII detection and masking")
+            recommendations.append("Use role-based output filtering")
+
+        if "destructive" in categories:
+            recommendations.append("Require approval for destructive operations")
+            recommendations.append("Implement immutable audit logging")
+
+        if "permission" in categories:
+            recommendations.append("Apply least-privilege tool access")
+            recommendations.append("Define tool scope boundaries")
+
+        if severity == "CRITICAL":
+            recommendations.insert(0, "Escalate to security team immediately")
+
+        return recommendations[:5]  # Limit to 5 recommendations

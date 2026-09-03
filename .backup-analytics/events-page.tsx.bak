@@ -1,0 +1,67 @@
+"use client"
+
+import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
+import { supabase } from "@/lib/supabase"
+
+export default function EventsPage() {
+  const router = useRouter()
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      const {
+        data: { user: authUser },
+      } = await supabase.auth.getUser()
+      if (!authUser) {
+        router.push("/login")
+        return
+      }
+      setLoading(false)
+    }
+    checkAuth()
+  }, [router])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-muted-foreground">Loading...</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <header className="border-b border-border/40 bg-card/50 backdrop-blur-sm sticky top-0 z-50">
+        <div className="container mx-auto px-4 py-6 flex justify-between items-center">
+          <h1 className="text-2xl font-bold text-accent">AgentShield Cloud</h1>
+          <nav className="flex gap-4 text-sm">
+            <a href="/dashboard" className="hover:text-accent transition">
+              Dashboard
+            </a>
+            <a href="/simulator" className="hover:text-accent transition">
+              Simulator
+            </a>
+            <button
+              onClick={() => supabase.auth.signOut().then(() => router.push("/"))}
+              className="text-muted-foreground hover:text-accent transition"
+            >
+              Logout
+            </button>
+          </nav>
+        </div>
+      </header>
+
+      <div className="container mx-auto px-4 py-8">
+        <h2 className="text-3xl font-bold mb-2">Security Events</h2>
+        <p className="text-muted-foreground mb-8">
+          Searchable audit trail of all agent action evaluations
+        </p>
+
+        <div className="p-8 rounded-lg border border-dashed border-border/40 text-center text-muted-foreground">
+          <p>Events will be displayed here once you run simulations</p>
+        </div>
+      </div>
+    </div>
+  )
+}

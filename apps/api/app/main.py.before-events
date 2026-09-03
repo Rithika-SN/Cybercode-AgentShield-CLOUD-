@@ -1,0 +1,251 @@
+import logging
+import os
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Optional
+
+from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.schemas import (
+    SecurityEvaluationRequest,
+    SecurityEvaluationResponse,
+    DashboardMetrics,
+)
+from app.security_evaluator import SecurityEvaluator
+import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+evaluator = SecurityEvaluator()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("AgentShield API starting up")
+    yield
+    logger.info("AgentShield API shutting down")
+
+
+app = FastAPI(
+    title="AgentShield Cloud API",
+    description="Secure AI agent action evaluation",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# Configure CORS
+cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGIN", "http://localhost:3000").split(",") if origin.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+async def get_current_user(authorization: Optional[str] = Header(default=None)) -> dict:
+    """Validate the Supabase access token through Supabase Auth."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid authorization header",
+        )
+
+    token = authorization.split(" ", 1)[1]
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_ANON_KEY")
+
+    if not supabase_url or not supabase_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supabase authentication is not configured on the API.",
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{supabase_url}/auth/v1/user",
+                headers={
+                    "apikey": supabase_key,
+                    "Authorization": f"Bearer {token}",
+                },
+            )
+
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired access token",
+            )
+
+        user = response.json()
+        user_id = user.get("id")
+
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid access token",
+            )
+
+        return {
+            "user_id": user_id,
+            "email": user.get("email", "unknown"),
+        }
+
+    except httpx.RequestError as exc:
+        logger.error("Supabase Auth request failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to reach Supabase authentication service",
+        ) from exc
+
+
+@app.get("/health", tags=["Health"])
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.post(
+    "/api/v1/evaluate",
+    response_model=SecurityEvaluationResponse,
+    tags=["Security Evaluation"],
+)
+async def evaluate_agent_action(
+    request: SecurityEvaluationRequest,
+    user: dict = Depends(get_current_user),
+) -> SecurityEvaluationResponse:
+    """
+    Evaluate an agent action for security risks.
+
+    Returns a decision (ALLOW, REQUIRE_APPROVAL, BLOCK) with risk score and detections.
+    """
+    logger.info(
+        f"Evaluating action from {user['email']}: {request.agent_name}"
+    )
+
+    result = evaluator.evaluate(
+        agent_name=request.agent_name,
+        user_request=request.user_request,
+        requested_tool=request.requested_tool,
+        mock_context=request.mock_context,
+    )
+
+    return SecurityEvaluationResponse(
+        decision=result["decision"],
+        risk_score=result["risk_score"],
+        severity=result["severity"],
+        categories=result["categories"],
+        detections=result["detections"],
+        matching_policy_ids=result["matching_policy_ids"],
+        mitigation_recommendations=result["mitigation_recommendations"],
+        sanitized_input_preview=result["sanitized_input_preview"],
+    )
+
+
+@app.get("/api/v1/dashboard/metrics", response_model=DashboardMetrics, tags=["Dashboard"])
+async def get_dashboard_metrics(user: dict = Depends(get_current_user)):
+    """Get aggregated dashboard metrics."""
+    # Return mock metrics
+    return DashboardMetrics(
+        total_evaluations=500,
+        blocked_actions=24,
+        monitored_actions=156,
+        approval_requests=8,
+        active_policies=12,
+        avg_risk_score=35.5,
+    )
+
+
+@app.get("/api/v1/events", tags=["Security Events"])
+async def list_events(
+    user: dict = Depends(get_current_user),
+    skip: int = 0,
+    limit: int = 50,
+):
+    """List security events for the user."""
+    # Return empty list (would query database in production)
+    return {"items": [], "total": 0, "skip": skip, "limit": limit}
+
+
+@app.get("/api/v1/policies", tags=["Policies"])
+async def list_policies(user: dict = Depends(get_current_user)):
+    """List active security policies."""
+    return {
+        "policies": [
+            {
+                "id": p["id"],
+                "name": p["name"],
+                "severity_threshold": p["severity_threshold"],
+                "action": p["action"],
+            }
+            for p in evaluator.POLICIES.values()
+        ]
+    }
+
+
+@app.post("/api/v1/policies", tags=["Policies"])
+async def create_policy(
+    policy_data: dict,
+    user: dict = Depends(get_current_user),
+):
+    """Create a new security policy."""
+    return {"id": "policy_new", "status": "created", "message": "Policy would be persisted to database"}
+
+
+@app.patch("/api/v1/policies/{policy_id}", tags=["Policies"])
+async def update_policy(
+    policy_id: str,
+    policy_data: dict,
+    user: dict = Depends(get_current_user),
+):
+    """Update a security policy."""
+    return {"id": policy_id, "status": "updated", "message": "Policy would be persisted to database"}
+
+
+@app.delete("/api/v1/policies/{policy_id}", tags=["Policies"])
+async def delete_policy(
+    policy_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Delete a security policy."""
+    return {"id": policy_id, "status": "deleted", "message": "Policy would be deleted from database"}
+
+
+@app.get("/api/v1/events/{event_id}", tags=["Security Events"])
+async def get_event(
+    event_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Get a specific security event."""
+    return {"id": event_id, "status": "not_found", "message": "Event would be fetched from database"}
+
+
+@app.get("/api/v1/approvals", tags=["Approvals"])
+async def list_approvals(
+    user: dict = Depends(get_current_user),
+    status: str = None,
+):
+    """List approval requests."""
+    return {"items": [], "total": 0}
+
+
+@app.post("/api/v1/approvals/{approval_id}/decision", tags=["Approvals"])
+async def make_approval_decision(
+    approval_id: str,
+    decision_data: dict,
+    user: dict = Depends(get_current_user),
+):
+    """Approve or deny a high-risk action."""
+    return {"id": approval_id, "status": "processed", "message": "Approval decision would be persisted"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)

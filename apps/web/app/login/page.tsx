@@ -1,0 +1,172 @@
+"use client"
+
+import { useState } from "react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { supabase } from "@/lib/supabase"
+
+export default function LoginPage() {
+  const router = useRouter()
+
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [error, setError] = useState("")
+  const [loading, setLoading] = useState(false)
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    setError("")
+    setLoading(true)
+
+    try {
+      const { data, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        })
+
+      if (authError) {
+        const message = authError.message.toLowerCase()
+
+        if (message.includes("email not confirmed")) {
+          throw new Error(
+            "Please verify your email before signing in."
+          )
+        }
+
+        if (
+          message.includes("invalid login credentials") ||
+          message.includes("invalid credentials")
+        ) {
+          throw new Error(
+            "Incorrect email or password. Please try again."
+          )
+        }
+
+        throw authError
+      }
+
+      if (!data.session) {
+        throw new Error(
+          "Unable to create a login session. Please try again."
+        )
+      }
+
+      localStorage.setItem(
+        "auth_token",
+        data.session.access_token
+      )
+
+      router.push("/dashboard")
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Unable to sign in. Please try again."
+
+      setError(message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-accent mb-2">
+            AgentShield Cloud
+          </h1>
+
+          <p className="text-muted-foreground">
+            Sign in to your account
+          </p>
+        </div>
+
+        <form onSubmit={handleLogin} className="space-y-4">
+
+          {error && (
+            <div
+              role="alert"
+              className="p-3 rounded-lg bg-destructive/10 border border-destructive/50 text-destructive text-sm"
+            >
+              {error}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              Email
+            </label>
+
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full px-4 py-2 rounded-lg border border-border bg-card text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+              placeholder="you@example.com"
+              autoComplete="email"
+              required
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium">
+                Password
+              </label>
+
+              <Link
+                href="/forgot-password"
+                className="text-sm text-accent hover:underline"
+              >
+                Forgot password?
+              </Link>
+            </div>
+
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-4 py-2 rounded-lg border border-border bg-card text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+              placeholder="••••••••"
+              autoComplete="current-password"
+              required
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-2 rounded-lg bg-accent text-accent-foreground font-medium hover:bg-accent/90 transition disabled:opacity-50"
+          >
+            {loading ? "Signing in..." : "Sign in"}
+          </button>
+
+        </form>
+
+        <div className="mt-6 text-center text-sm text-muted-foreground">
+          Don't have an account?{" "}
+          <Link
+            href="/signup"
+            className="text-accent hover:underline"
+          >
+            Sign up
+          </Link>
+        </div>
+
+        <div className="mt-6 text-center text-sm text-muted-foreground">
+          <Link
+            href="/"
+            className="text-accent hover:underline"
+          >
+            Back to home
+          </Link>
+        </div>
+
+      </div>
+    </div>
+  )
+}

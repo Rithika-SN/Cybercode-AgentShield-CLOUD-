@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "agentshield-api"
+version = "1.0.0"
+description = "AgentShield Cloud - AI agent security evaluation backend"
+authors = ["AgentShield <team@agentshield.cloud>"]
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = ">=3.9,<4.0"
+fastapi = "^0.115.0"
+uvicorn = {version = "^0.30.0", extras = ["standard"]}
+pydantic = "^2.8.2"
+pydantic-settings = "^2.3.0"
+sqlalchemy = "^2.0.36"
+psycopg2-binary = "^2.9.10"
+supabase = "^2.4.1"
+python-dotenv = "^1.0.1"
+python-jose = {version = "^3.3.0", extras = ["cryptography"]}
+passlib = {version = "^1.7.4", extras = ["bcrypt"]}
+email-validator = "^2.2.0"
+pytest = "^8.3.2"
+pytest-asyncio = "^0.24.0"
+httpx = "^0.27.0"
+pydantic-extra-types = "^2.8.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

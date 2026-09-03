@@ -1,0 +1,291 @@
+"use client"
+
+import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
+import { supabase } from "@/lib/supabase"
+import Link from "next/link"
+import {
+  PieChart,
+  Pie,
+  Cell,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts"
+import { motion } from "framer-motion"
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  BarChart3,
+  Shield,
+} from "lucide-react"
+
+export default function DashboardPage() {
+  const router = useRouter()
+  const [user, setUser] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [metrics] = useState({
+    blocked_actions: 24,
+    monitored_actions: 156,
+    approval_requests: 8,
+    active_policies: 12,
+    avg_risk_score: 35,
+    total_evaluations: 500,
+  })
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const {
+          data: { user: authUser },
+        } = await supabase.auth.getUser()
+        if (!authUser) {
+          router.push("/login")
+          return
+        }
+        setUser(authUser)
+      } catch (error) {
+        router.push("/login")
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    checkAuth()
+  }, [router])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-muted-foreground">Loading...</div>
+      </div>
+    )
+  }
+
+  const riskCategoryData = [
+    { name: "Injection", value: 24, color: "#00CED1" },
+    { name: "Data Leak", value: 18, color: "#D946EF" },
+    { name: "Privilege", value: 12, color: "#22C55E" },
+    { name: "Destructive", value: 8, color: "#EF4444" },
+  ]
+
+  const timelineData = [
+    { date: "Mon", blocked: 4, allowed: 18, approval: 2 },
+    { date: "Tue", blocked: 6, allowed: 22, approval: 3 },
+    { date: "Wed", blocked: 3, allowed: 15, approval: 1 },
+    { date: "Thu", blocked: 8, allowed: 25, approval: 4 },
+    { date: "Fri", blocked: 5, allowed: 20, approval: 2 },
+  ]
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="border-b border-border/40 bg-card/50 backdrop-blur-sm sticky top-0 z-50">
+        <div className="container mx-auto px-4 py-6 flex justify-between items-center">
+          <h1 className="text-2xl font-bold text-accent">AgentShield Cloud</h1>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-muted-foreground">
+              {user?.email}
+            </span>
+            <button
+              onClick={() => supabase.auth.signOut().then(() => router.push("/"))}
+              className="px-3 py-1 rounded-lg border border-border hover:bg-card text-sm transition"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="container mx-auto px-4 py-8">
+        {/* Welcome */}
+        <motion.div
+          className="mb-8"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+        >
+          <h2 className="text-3xl font-bold mb-2">
+            Welcome, {user?.user_metadata?.full_name || "User"}
+          </h2>
+          <p className="text-muted-foreground">
+            Manage policies, review security events, and run simulations
+          </p>
+        </motion.div>
+
+        {/* Key Metrics */}
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+          {[
+            {
+              icon: AlertCircle,
+              label: "Blocked Actions",
+              value: metrics.blocked_actions,
+              color: "text-destructive",
+            },
+            {
+              icon: Clock,
+              label: "Awaiting Approval",
+              value: metrics.approval_requests,
+              color: "text-amber-500",
+            },
+            {
+              icon: CheckCircle2,
+              label: "Allowed Actions",
+              value: metrics.monitored_actions,
+              color: "text-emerald-500",
+            },
+            {
+              icon: Shield,
+              label: "Active Policies",
+              value: metrics.active_policies,
+              color: "text-accent",
+            },
+            {
+              icon: BarChart3,
+              label: "Avg Risk Score",
+              value: `${metrics.avg_risk_score}%`,
+              color: "text-secondary",
+            },
+            {
+              icon: AlertCircle,
+              label: "Total Evaluations",
+              value: metrics.total_evaluations,
+              color: "text-muted-foreground",
+            },
+          ].map((metric, i) => (
+            <motion.div
+              key={i}
+              className="p-6 rounded-lg border border-border/40 bg-card hover:border-accent/50 transition card-hover"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05 }}
+            >
+              <div className="flex items-center gap-4">
+                <metric.icon className={`${metric.color}`} size={32} />
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase">
+                    {metric.label}
+                  </p>
+                  <p className="text-2xl font-bold">{metric.value}</p>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+
+        {/* Charts */}
+        <div className="grid lg:grid-cols-2 gap-6 mb-8">
+          {/* Timeline Chart */}
+          <motion.div
+            className="p-6 rounded-lg border border-border/40 bg-card"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            <h3 className="font-semibold mb-4">Weekly Security Events</h3>
+            <ResponsiveContainer width="100%" height={250}>
+              <LineChart data={timelineData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                <XAxis dataKey="date" stroke="#666" />
+                <YAxis stroke="#666" />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "#1a1a1a",
+                    border: "1px solid #333",
+                  }}
+                />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="allowed"
+                  stroke="#00CED1"
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="blocked"
+                  stroke="#EF4444"
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="approval"
+                  stroke="#F59E0B"
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </motion.div>
+
+          {/* Risk Category Pie */}
+          <motion.div
+            className="p-6 rounded-lg border border-border/40 bg-card"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+          >
+            <h3 className="font-semibold mb-4">Risk Categories</h3>
+            <ResponsiveContainer width="100%" height={250}>
+              <PieChart>
+                <Pie
+                  data={riskCategoryData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, value }) => `${name} ${value}`}
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {riskCategoryData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          </motion.div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="grid md:grid-cols-4 gap-4">
+          {[
+            {
+              label: "Run Simulation",
+              href: "/simulator",
+              icon: "🔍",
+            },
+            {
+              label: "View Events",
+              href: "/events",
+              icon: "📋",
+            },
+            {
+              label: "Manage Policies",
+              href: "/policies",
+              icon: "⚙️",
+            },
+            {
+              label: "Security Coverage",
+              href: "/security-coverage",
+              icon: "🛡️",
+            },
+          ].map((action, i) => (
+            <Link
+              key={i}
+              href={action.href}
+              className="p-4 rounded-lg border border-accent/30 bg-card hover:bg-accent/10 transition text-center"
+            >
+              <div className="text-2xl mb-2">{action.icon}</div>
+              <div className="text-sm font-medium">{action.label}</div>
+            </Link>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
