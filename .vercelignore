@@ -1,0 +1,10 @@
+.turbo/
+.pytest_cache/
+apps/api/.venv/
+apps/api/__pycache__/
+apps/api/.pytest_cache/
+**/__pycache__/
+**/*.pyc
+*.bak
+*.before-*
+.git/
