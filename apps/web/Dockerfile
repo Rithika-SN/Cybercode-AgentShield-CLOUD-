@@ -1,19 +1,33 @@
 FROM node:20-alpine AS builder
+
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
+
+COPY package.json ./
+RUN npm install
 
 COPY . .
-RUN npm run build -w @agentshield-cloud/web
+
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_API_URL
+
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+RUN npm run build
 
 FROM node:20-alpine
-WORKDIR /app
-COPY --from=builder /app/apps/web/.next ./.next
-COPY --from=builder /app/apps/web/public ./public
-COPY --from=builder /app/apps/web/package*.json ./
 
-RUN npm ci --production
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/package.json ./package.json
+
+RUN npm install --omit=dev
 
 EXPOSE 3000
 
-CMD ["npm", "start", "-w", "@agentshield-cloud/web"]
+CMD ["npm", "start"]
